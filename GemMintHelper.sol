@@ -12,8 +12,12 @@ interface IGem {
 
 contract GemMintHelper is OwnableUpgradeable, PausableUpgradeable {
     IGem public gem;
-    bool public preMined;
     mapping (address=>bool) internal _vaultControllers;
+
+    uint256[4] public reservedShares; //0: private 14%, 1: team 10%, 2: marketing 10%, 3: foundation 10%
+    uint256[4] public accMintReservedShares;
+    uint256 public gameMintMaxAmounts;
+    uint256 public accGameMintAmounts;
 
     function initialize(
         address _gem
@@ -25,19 +29,21 @@ contract GemMintHelper is OwnableUpgradeable, PausableUpgradeable {
 
         gem = IGem(_gem);
         _vaultControllers[msg.sender] = true;
-        preMined = false;
+        reservedShares = [14, 10, 10, 10];
+        accMintReservedShares = [0,0,0,0];
+        uint256 maxAmount = gem.MAX_SUPPLY();
+        gameMintMaxAmounts = maxAmount * 56 / 100;
+        accGameMintAmounts = 0;
     }
 
-    function preMint(address[] memory _accounts, uint8[] memory _shares) external onlyOwner {
-        require(preMined == false);
-        require(_accounts.length == _shares.length);
+    function reservedMint(address _account, uint8 _shares, uint8 _type) external onlyOwner {
+        require(_type < 4);
+        require(accMintReservedShares[_type] + _shares <= 100);
+        accMintReservedShares[_type] += _shares;
         uint256 maxAmount = gem.MAX_SUPPLY();
-        for (uint8 i = 0; i < _accounts.length; ++i) {
-            require(_shares[i] < 50);
-            uint256 amount = maxAmount * _shares[i] / 100;
-            gem.mint(_accounts[i], amount);
-        }
-        preMined = true;
+        uint256 amount = maxAmount * reservedShares[_type] * _shares / 10000;
+        gem.mint(_account, amount);
+
     }
 
     function setVault(address _vault, bool _enable) external onlyOwner returns ( bool ) {
@@ -63,6 +69,19 @@ contract GemMintHelper is OwnableUpgradeable, PausableUpgradeable {
     }
 
     function mint(address _account, uint256 _amount) external onlyVault whenNotPaused {
+        if (accGameMintAmounts + _amount > gameMintMaxAmounts) {
+            if (IERC20(address(gem)).balanceOf(address(this)) >= _amount) {
+                IERC20(address(gem)).transfer(_account, _amount);
+                return;
+            } 
+
+            _amount = gameMintMaxAmounts - accGameMintAmounts;
+            if (_amount == 0) {
+                return;
+            }
+        }
+
         gem.mint(_account, _amount);
+        accGameMintAmounts += _amount;
     }
 }
